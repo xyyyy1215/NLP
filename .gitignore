@@ -1,0 +1,52 @@
+# Local development
+.venv/
+venv/
+env/
+.env
+.env.*
+*.env
+!*.env.example
+
+# Secrets and API credentials
+*api_key*
+*apikey*
+*secret*
+*token*
+
+# Model files and local Hugging Face caches
+models/
+**/models/
+**/.cache/
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.onnx
+*.onnx_data
+*.gguf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime outputs
+**/experiments/results/*/
+*.log
+*.jsonl
+
+# LaTeX/report build outputs
+*.aux
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+*.xdv
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
