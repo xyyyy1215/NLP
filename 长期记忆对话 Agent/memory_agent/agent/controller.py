@@ -1,4 +1,5 @@
 import calendar
+import os
 import re
 from datetime import timedelta
 
@@ -12,39 +13,41 @@ from memory_agent.memory.writer import MemoryWriter
 class MemoryAgent:
     """Main long-term memory agent: write memories, retrieve them, then answer."""
 
-    def __init__(self, top_k: int = 10):
+    def __init__(self, top_k: int = 8):
         self.llm = LLMClient()
         self.store = MemoryStore()
-        self.writer = MemoryWriter(self.llm)
+        self.use_writer = _env_bool("MEMORY_AGENT_USE_WRITER", default=False)
+        top_k = int(os.getenv("MEMORY_AGENT_TOP_K", str(top_k)))
+        self.writer = MemoryWriter(self.llm) if self.use_writer else None
         self.updater = MemoryUpdater()
         self.retriever = MemoryRetriever(self.store, top_k=top_k)
         self.last_trace: dict = {}
 
     def ingest(self, conversation: dict) -> None:
-        raw_memories = self.writer.write(conversation)
-        memories = self.updater.merge(raw_memories)
-        for memory in memories:
-            self.store.add(memory)
+        raw_memories = []
+        writer_trace = []
+        if self.writer is not None:
+            raw_memories = self.writer.write(conversation)
+            memories = self.updater.merge(raw_memories)
+            for memory in memories:
+                self.store.add(memory)
+            writer_trace = self.writer.last_trace
         raw_turns = self._raw_turn_memories(conversation)
         for memory in raw_turns:
             self.store.add(memory)
         self.store.rebuild()
         self.last_trace = {
+            "use_writer": self.use_writer,
             "raw_memory_count": len(raw_memories),
             "raw_turn_count": len(raw_turns),
             "memory_count": len(self.store.items),
-            "writer_trace": self.writer.last_trace,
+            "writer_trace": writer_trace,
         }
 
     def answer(self, question: str) -> str:
         retrieved = self.retriever.retrieve(question)
         memory_lines = [
-            (
-                f"- [{result.item.timestamp}] {result.item.text} "
-                f"(source={result.item.source}, score={result.score:.3f}, "
-                f"rel={result.relevance:.3f}, rec={result.recency:.3f}, "
-                f"imp={result.importance:.3f})"
-            )
+            _evidence_line(result.item)
             for result in retrieved
         ]
         prompt = (
@@ -199,3 +202,18 @@ def _dedupe(items: list[str]) -> list[str]:
         seen.add(item)
         output.append(item)
     return output
+
+
+def _evidence_line(item: MemoryItem) -> str:
+    text = str(item.text).strip()
+    timestamp = str(item.timestamp).strip()
+    if timestamp and not text.startswith("["):
+        text = f"[{timestamp}] {text}"
+    return f"- {text}"
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
