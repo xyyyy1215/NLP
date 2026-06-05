@@ -26,6 +26,8 @@ class MemoryRetriever:
         lexical_weight: float = 0.35,
         recency_weight: float = 0.025,
         importance_weight: float = 0.025,
+        dense_candidate_count: int = 80,
+        lexical_candidate_count: int = 80,
     ):
         self.store = store
         self.top_k = top_k
@@ -33,16 +35,25 @@ class MemoryRetriever:
         self.lexical_weight = lexical_weight
         self.recency_weight = recency_weight
         self.importance_weight = importance_weight
+        self.dense_candidate_count = dense_candidate_count
+        self.lexical_candidate_count = lexical_candidate_count
 
     def retrieve(self, question: str) -> list[RetrievalResult]:
         relevance_scores = self.store.relevance_scores(question)
         if not relevance_scores:
             return []
+        lexical_scores = [
+            _lexical_score(question, item.text, item.metadata)
+            for item in self.store.items
+        ]
+        candidate_indices = self._candidate_indices(relevance_scores, lexical_scores)
         results = []
-        for item, relevance in zip(self.store.items, relevance_scores):
+        for index in candidate_indices:
+            item = self.store.items[index]
+            relevance = relevance_scores[index]
             recency = self.store.recency_score(item)
             importance = min(max(item.importance / 5.0, 0.0), 1.0)
-            lexical = _lexical_score(question, item.text, item.metadata)
+            lexical = lexical_scores[index]
             score = (
                 self.relevance_weight * relevance
                 + self.lexical_weight * lexical
@@ -55,6 +66,14 @@ class MemoryRetriever:
         for result in selected:
             self.store.mark_accessed(result.item)
         return selected
+
+    def _candidate_indices(self, relevance_scores: list[float], lexical_scores: list[float]) -> list[int]:
+        dense_ranked = sorted(range(len(relevance_scores)), key=relevance_scores.__getitem__, reverse=True)
+        lexical_ranked = sorted(range(len(lexical_scores)), key=lexical_scores.__getitem__, reverse=True)
+        candidates = set(dense_ranked[: self.dense_candidate_count])
+        candidates.update(lexical_ranked[: self.lexical_candidate_count])
+        candidates.update(i for i, score in enumerate(lexical_scores) if score >= 0.55)
+        return sorted(candidates)
 
 
 _STOPWORDS = {

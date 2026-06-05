@@ -82,6 +82,8 @@ def _parse_time(value: str) -> datetime | None:
         return None
     value = str(value).strip()
     formats = (
+        ("%I:%M %p on %d %B, %Y", None),
+        ("%I:%M %p on %d %b, %Y", None),
         ("%Y-%m-%d %H:%M:%S", 19),
         ("%Y-%m-%d", 10),
         ("%m/%d/%Y", 10),
@@ -89,7 +91,8 @@ def _parse_time(value: str) -> datetime | None:
     )
     for fmt, width in formats:
         try:
-            return datetime.strptime(value[:width], fmt)
+            candidate = value[:width] if width else value
+            return datetime.strptime(candidate, fmt)
         except ValueError:
             continue
     try:

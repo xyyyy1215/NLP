@@ -1,6 +1,10 @@
+import calendar
+import re
+from datetime import timedelta
+
 from memory_agent.eval.core.llm_client import LLMClient
 from memory_agent.memory.retriever import MemoryRetriever
-from memory_agent.memory.store import MemoryItem, MemoryStore
+from memory_agent.memory.store import MemoryItem, MemoryStore, _parse_time
 from memory_agent.memory.updater import MemoryUpdater
 from memory_agent.memory.writer import MemoryWriter
 
@@ -8,7 +12,7 @@ from memory_agent.memory.writer import MemoryWriter
 class MemoryAgent:
     """Main long-term memory agent: write memories, retrieve them, then answer."""
 
-    def __init__(self, top_k: int = 12):
+    def __init__(self, top_k: int = 10):
         self.llm = LLMClient()
         self.store = MemoryStore()
         self.writer = MemoryWriter(self.llm)
@@ -90,9 +94,13 @@ class MemoryAgent:
                 if not text:
                     continue
                 speaker = str(turn.get("speaker", "unknown")).strip()
+                evidence_text = f"[{timestamp}] {speaker}: {text}"
+                time_hints = _temporal_hints(text, timestamp)
+                if time_hints:
+                    evidence_text = f"{evidence_text} Inferred time hints: {'; '.join(time_hints)}."
                 memories.append(
                     MemoryItem(
-                        text=f"[{timestamp}] {speaker}: {text}",
+                        text=evidence_text,
                         source=f"{session_id}:turn{turn_index}",
                         timestamp=timestamp,
                         importance=1.5,
@@ -104,3 +112,90 @@ class MemoryAgent:
                     )
                 )
         return memories
+
+
+_WEEKDAYS = {
+    "monday": ("monday", 0),
+    "mon": ("monday", 0),
+    "tuesday": ("tuesday", 1),
+    "tue": ("tuesday", 1),
+    "tues": ("tuesday", 1),
+    "wednesday": ("wednesday", 2),
+    "wed": ("wednesday", 2),
+    "thursday": ("thursday", 3),
+    "thu": ("thursday", 3),
+    "thur": ("thursday", 3),
+    "thurs": ("thursday", 3),
+    "friday": ("friday", 4),
+    "fri": ("friday", 4),
+    "saturday": ("saturday", 5),
+    "sat": ("saturday", 5),
+    "sunday": ("sunday", 6),
+    "sun": ("sunday", 6),
+}
+
+
+def _temporal_hints(text: str, timestamp: str) -> list[str]:
+    base = _parse_time(timestamp)
+    if base is None:
+        return []
+    lowered = str(text).lower()
+    hints: list[str] = []
+
+    month_year = _month_year(base.month, base.year)
+    previous_month = _shift_month(base.month, base.year, -1)
+    next_month = _shift_month(base.month, base.year, 1)
+    phrases = [
+        ("this month", month_year),
+        ("last month", _month_year(*previous_month)),
+        ("next month", _month_year(*next_month)),
+        ("last year", str(base.year - 1)),
+        ("this year", str(base.year)),
+        ("next year", str(base.year + 1)),
+        ("yesterday", _date_label(base - timedelta(days=1))),
+        ("today", _date_label(base)),
+        ("tomorrow", _date_label(base + timedelta(days=1))),
+        ("last week", f"the week before {_date_label(base)}"),
+        ("next week", f"the week after {_date_label(base)}"),
+    ]
+    for phrase, value in phrases:
+        if phrase in lowered:
+            hints.append(f"{phrase} = {value}")
+
+    weekday_pattern = "|".join(sorted(_WEEKDAYS, key=len, reverse=True))
+    for match in re.finditer(rf"\b(last|next)\s+({weekday_pattern})\b", lowered):
+        direction, weekday_key = match.groups()
+        weekday_name, weekday = _WEEKDAYS[weekday_key]
+        delta = (base.weekday() - weekday) % 7 if direction == "last" else (weekday - base.weekday()) % 7
+        if delta == 0:
+            delta = 7
+        resolved = base - timedelta(days=delta) if direction == "last" else base + timedelta(days=delta)
+        hints.append(f"{direction} {weekday_name} = {_date_label(resolved)}")
+
+    return _dedupe(hints)
+
+
+def _shift_month(month: int, year: int, offset: int) -> tuple[int, int]:
+    zero_based = month - 1 + offset
+    new_year = year + zero_based // 12
+    new_month = zero_based % 12 + 1
+    return new_month, new_year
+
+
+def _month_year(month: int, year: int) -> str:
+    return f"{calendar.month_name[month]} {year}"
+
+
+def _date_label(value) -> str:
+    return f"{value.day} {calendar.month_name[value.month]} {value.year}"
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen = set()
+    output = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        output.append(item)
+    return output
