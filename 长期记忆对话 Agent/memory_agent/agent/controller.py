@@ -1,6 +1,6 @@
 from memory_agent.eval.core.llm_client import LLMClient
 from memory_agent.memory.retriever import MemoryRetriever
-from memory_agent.memory.store import MemoryStore
+from memory_agent.memory.store import MemoryItem, MemoryStore
 from memory_agent.memory.updater import MemoryUpdater
 from memory_agent.memory.writer import MemoryWriter
 
@@ -8,7 +8,7 @@ from memory_agent.memory.writer import MemoryWriter
 class MemoryAgent:
     """Main long-term memory agent: write memories, retrieve them, then answer."""
 
-    def __init__(self, top_k: int = 6):
+    def __init__(self, top_k: int = 12):
         self.llm = LLMClient()
         self.store = MemoryStore()
         self.writer = MemoryWriter(self.llm)
@@ -21,9 +21,13 @@ class MemoryAgent:
         memories = self.updater.merge(raw_memories)
         for memory in memories:
             self.store.add(memory)
+        raw_turns = self._raw_turn_memories(conversation)
+        for memory in raw_turns:
+            self.store.add(memory)
         self.store.rebuild()
         self.last_trace = {
             "raw_memory_count": len(raw_memories),
+            "raw_turn_count": len(raw_turns),
             "memory_count": len(self.store.items),
             "writer_trace": self.writer.last_trace,
         }
@@ -40,14 +44,17 @@ class MemoryAgent:
             for result in retrieved
         ]
         prompt = (
-            "You are a long-term memory dialogue agent. Answer the question using only "
-            "the memory units below. Keep the answer short. If the answer is absent, "
-            "reply 'unknown'.\n\n"
+            "You are a long-term memory dialogue agent. Answer using only the memory "
+            "units and raw dialogue evidence below. Return a short answer phrase, not "
+            "an explanation. If the evidence contains a relative time such as yesterday, "
+            "last Friday, this month, or next month, infer the date from the timestamp "
+            "shown in brackets. If several evidence lines are relevant, combine them. "
+            "Reply 'unknown' only when no relevant evidence is present.\n\n"
             f"=== Memory units ===\n{chr(10).join(memory_lines)}\n\n"
             f"=== Question ===\n{question}\n\n"
             "=== Answer ==="
         )
-        answer = self.llm.tracked_generate(prompt, max_tokens=64).strip()
+        answer = self.llm.tracked_generate(prompt, max_tokens=96).strip()
         self.last_trace = {
             "memory_count": len(self.store.items),
             "retrieved": [
@@ -58,6 +65,7 @@ class MemoryAgent:
                     "importance": result.item.importance,
                     "score": round(result.score, 4),
                     "relevance": round(result.relevance, 4),
+                    "lexical": round(result.lexical, 4),
                     "recency": round(result.recency, 4),
                     "importance_score": round(result.importance, 4),
                     "metadata": result.item.metadata,
@@ -71,3 +79,28 @@ class MemoryAgent:
 
     def get_trace(self) -> dict:
         return self.last_trace
+
+    def _raw_turn_memories(self, conversation: dict) -> list[MemoryItem]:
+        memories: list[MemoryItem] = []
+        for session in conversation.get("sessions", []):
+            timestamp = session.get("date_time", "")
+            session_id = session.get("session_id", "")
+            for turn_index, turn in enumerate(session.get("turns", [])):
+                text = str(turn.get("text", "")).strip()
+                if not text:
+                    continue
+                speaker = str(turn.get("speaker", "unknown")).strip()
+                memories.append(
+                    MemoryItem(
+                        text=f"[{timestamp}] {speaker}: {text}",
+                        source=f"{session_id}:turn{turn_index}",
+                        timestamp=timestamp,
+                        importance=1.5,
+                        metadata={
+                            "kind": "raw_turn",
+                            "speaker": speaker.lower(),
+                            "session_id": session_id,
+                        },
+                    )
+                )
+        return memories

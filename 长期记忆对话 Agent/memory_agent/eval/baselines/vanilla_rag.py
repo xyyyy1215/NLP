@@ -11,7 +11,8 @@ class VanillaRAGAgent:
         from sentence_transformers import SentenceTransformer
 
         model_name = os.getenv("EMBED_MODEL", "models/bge-m3")
-        self.embed_model = SentenceTransformer(model_name)
+        device = os.getenv("EMBED_DEVICE", "cpu")
+        self.embed_model = SentenceTransformer(model_name, device=device)
         self.top_k = top_k
         self.chunks: list[str] = []
         self.embeddings = None

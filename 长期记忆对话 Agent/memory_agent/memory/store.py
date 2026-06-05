@@ -40,7 +40,7 @@ class MemoryStore:
         import numpy as np
 
         model = self._model()
-        texts = [item.text for item in self.items]
+        texts = [_index_text(item) for item in self.items]
         vecs = model.encode(texts, normalize_embeddings=True)
         self.embeddings = np.array(vecs, dtype=np.float32)
 
@@ -96,3 +96,17 @@ def _parse_time(value: str) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
     except ValueError:
         return None
+
+
+def _index_text(item: MemoryItem) -> str:
+    metadata = item.metadata or {}
+    parts = [item.text]
+    subject = metadata.get("subject") or metadata.get("speaker")
+    attribute = metadata.get("attribute")
+    if subject:
+        parts.append(f"subject: {subject}")
+    if attribute:
+        parts.append(f"type: {attribute}")
+    if item.timestamp:
+        parts.append(f"time: {item.timestamp}")
+    return " ".join(str(part) for part in parts if str(part).strip())

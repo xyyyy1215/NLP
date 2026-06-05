@@ -6,15 +6,19 @@ from memory_agent.memory.store import MemoryItem
 
 
 WRITE_SYSTEM = (
-    "You extract concise long-term memories from dialogue. "
-    "Return JSON only. Do not include raw dialogue turns."
+    "You extract high-fidelity long-term memories from dialogue. "
+    "Return JSON only. Preserve concrete facts; do not over-summarize."
 )
 
 WRITE_PROMPT = """Extract long-term memory facts from this dialogue session.
 
 Keep only stable or useful information for future questions:
 - identity, relationship, preference, plan, event, location, job, family, health, update, or conflict.
-- Ignore small talk and one-off phrasing.
+- names, dates, relative time phrases, activities, hobbies, objects, books, events, and opinions.
+- Keep concrete answerable details even if they are one-off events.
+- Preserve exact wording for dates and relative times such as yesterday, last Friday, this month, or next month.
+- Split different facts into separate atomic memory items.
+- Ignore greetings, compliments, and generic emotional support unless they reveal an opinion or relationship.
 
 Return a JSON array. Each item must have:
 {{
@@ -50,7 +54,7 @@ class MemoryWriter:
                 )
                 raw = self.llm.tracked_generate(
                     prompt,
-                    max_tokens=512,
+                    max_tokens=768,
                     temperature=0.0,
                     system=WRITE_SYSTEM,
                 )
@@ -117,7 +121,26 @@ class MemoryWriter:
 
     def _fallback(self, dialogue: str) -> list[dict]:
         memories = []
-        cues = ("favorite", "prefer", "works", "lives", "moved", "birthday", "family", "plan")
+        cues = (
+            "adopt",
+            "birthday",
+            "book",
+            "camp",
+            "conference",
+            "favorite",
+            "family",
+            "job",
+            "last",
+            "lgbt",
+            "lives",
+            "moved",
+            "plan",
+            "prefer",
+            "research",
+            "transgender",
+            "works",
+            "yesterday",
+        )
         for line in dialogue.splitlines():
             lowered = line.lower()
             if any(cue in lowered for cue in cues):
@@ -137,4 +160,3 @@ def _importance(value) -> float:
         return max(1.0, min(float(value), 5.0))
     except (TypeError, ValueError):
         return 2.0
-
