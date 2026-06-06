@@ -1,4 +1,5 @@
 import math
+import os
 import re
 from dataclasses import dataclass
 
@@ -31,12 +32,18 @@ class MemoryRetriever:
     ):
         self.store = store
         self.top_k = top_k
-        self.relevance_weight = relevance_weight
-        self.lexical_weight = lexical_weight
-        self.recency_weight = recency_weight
-        self.importance_weight = importance_weight
-        self.dense_candidate_count = dense_candidate_count
-        self.lexical_candidate_count = lexical_candidate_count
+        self.use_lexical = _env_bool("MEMORY_AGENT_USE_LEXICAL", default=True)
+        self.relevance_weight = float(os.getenv("MEMORY_AGENT_RELEVANCE_WEIGHT", str(relevance_weight)))
+        self.lexical_weight = float(os.getenv("MEMORY_AGENT_LEXICAL_WEIGHT", str(lexical_weight)))
+        self.recency_weight = float(os.getenv("MEMORY_AGENT_RECENCY_WEIGHT", str(recency_weight)))
+        self.importance_weight = float(os.getenv("MEMORY_AGENT_IMPORTANCE_WEIGHT", str(importance_weight)))
+        self.dense_candidate_count = int(os.getenv("MEMORY_AGENT_DENSE_CANDIDATES", str(dense_candidate_count)))
+        self.lexical_candidate_count = int(os.getenv("MEMORY_AGENT_LEXICAL_CANDIDATES", str(lexical_candidate_count)))
+        if not self.use_lexical:
+            self.relevance_weight = 1.0
+            self.lexical_weight = 0.0
+            self.recency_weight = 0.0
+            self.importance_weight = 0.0
         self._token_cache: dict[int, set[str]] = {}
         self._subject_token_cache: dict[int, set[str]] = {}
 
@@ -48,7 +55,7 @@ class MemoryRetriever:
         lexical_scores = [
             self._lexical_score_for_item(query_tokens, index, item)
             for index, item in enumerate(self.store.items)
-        ]
+        ] if self.use_lexical else [0.0] * len(self.store.items)
         candidate_indices = self._candidate_indices(relevance_scores, lexical_scores)
         results = []
         for index in candidate_indices:
@@ -72,6 +79,8 @@ class MemoryRetriever:
 
     def _candidate_indices(self, relevance_scores: list[float], lexical_scores: list[float]) -> list[int]:
         dense_ranked = sorted(range(len(relevance_scores)), key=relevance_scores.__getitem__, reverse=True)
+        if not self.use_lexical:
+            return dense_ranked[: max(self.dense_candidate_count, self.top_k)]
         lexical_ranked = sorted(range(len(lexical_scores)), key=lexical_scores.__getitem__, reverse=True)
         candidates = set(dense_ranked[: self.dense_candidate_count])
         candidates.update(lexical_ranked[: self.lexical_candidate_count])
@@ -198,3 +207,10 @@ def _expanded_query_tokens(question: str) -> set[str]:
     if "lean" in tokens or "political" in tokens:
         tokens.update({"liberal", "advocacy", "lgbt", "pride"})
     return tokens
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}

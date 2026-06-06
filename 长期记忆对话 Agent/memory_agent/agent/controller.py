@@ -17,6 +17,8 @@ class MemoryAgent:
         self.llm = LLMClient()
         self.store = MemoryStore()
         self.use_writer = _env_bool("MEMORY_AGENT_USE_WRITER", default=False)
+        self.use_raw_turns = _env_bool("MEMORY_AGENT_USE_RAW_TURNS", default=True)
+        self.use_temporal_hints = _env_bool("MEMORY_AGENT_USE_TEMPORAL_HINT", default=True)
         top_k = int(os.getenv("MEMORY_AGENT_TOP_K", str(top_k)))
         self.writer = MemoryWriter(self.llm) if self.use_writer else None
         self.updater = MemoryUpdater()
@@ -32,12 +34,16 @@ class MemoryAgent:
             for memory in memories:
                 self.store.add(memory)
             writer_trace = self.writer.last_trace
-        raw_turns = self._raw_turn_memories(conversation)
-        for memory in raw_turns:
-            self.store.add(memory)
+        raw_turns = []
+        if self.use_raw_turns:
+            raw_turns = self._raw_turn_memories(conversation)
+            for memory in raw_turns:
+                self.store.add(memory)
         self.store.rebuild()
         self.last_trace = {
             "use_writer": self.use_writer,
+            "use_raw_turns": self.use_raw_turns,
+            "use_temporal_hints": self.use_temporal_hints,
             "raw_memory_count": len(raw_memories),
             "raw_turn_count": len(raw_turns),
             "memory_count": len(self.store.items),
@@ -98,7 +104,7 @@ class MemoryAgent:
                     continue
                 speaker = str(turn.get("speaker", "unknown")).strip()
                 evidence_text = f"[{timestamp}] {speaker}: {text}"
-                time_hints = _temporal_hints(text, timestamp)
+                time_hints = _temporal_hints(text, timestamp) if self.use_temporal_hints else []
                 if time_hints:
                     evidence_text = f"{evidence_text} Inferred time hints: {'; '.join(time_hints)}."
                 memories.append(

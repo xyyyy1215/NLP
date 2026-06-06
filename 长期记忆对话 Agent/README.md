@@ -1,4 +1,4 @@
-cd "/home/ubuntu22/NLP/长期记忆对话 Agent"//路径自己改
+cd "/home/ubuntu22/NLP/长期记忆对话 Agent"
 source /home/ubuntu22/nlp_memory_agent/.venv/bin/activate
 
 export CUDA_HOME=/usr/local/cuda
